@@ -2,24 +2,44 @@ package Node;
 
 use Data::Dumper;
 use Memoize;
-use List::Util qw( sum );
-use List::MoreUtils qw( pairwise );
+use List::Util qw(sum);
+use List::MoreUtils qw(pairwise);
 use Text::LevenshteinXS qw(distance);
 use URI::URL ();
 
+use constant W_INDEX         => 2.0;
+use constant W_INDEX_LEFT    => 0.7;
+use constant W_INDEX_RIGHT   => 0.1;
+use constant W_INDEX_DIFF    =>-9.0;
+use constant W_INDEX_MISSING =>-8.0;
+use constant W_INDEX_DECAY   => 0.9;
+use constant W_CONTENT       => 5.0;
+use constant W_CONTENT_EMPTY => 0.001;
+use constant W_URL           => 8.0;
+use constant W_REL           =>50.0;
+use constant W_FRIENDS       => 2.0;
+use constant W_NUMERIC       => 0.2;
+use constant W_URLMATCH      => 0.7;
+
 sub new {
   my $class = shift;
-  my ($raw, $base, $page) = @_;
+  my ($raw, $page_) = @_;
+  my $page = URI::URL->new($page_);
+  my $base = $page->host;
+  $base  =~ s/^www\.//;
+
   my $self = {
     raw => $raw,
-    url => $raw->attr('href'),
-    tag => $raw->tag(),
+    tag => $raw->tag,
     base => $base,
-    page => URI::URL->new($page)->full_path
+    page => $page
   };
   bless $self, $class;
 
-  $self->_init();
+  $self->{url} = URI::URL->new($self->_url, $page->abs);
+  $self->_init;
+
+  $self->{raw} = undef;
 
   return $self;
 }
@@ -27,23 +47,27 @@ sub new {
 sub _init {
   my $self = shift;
   my @indexes = reverse map {
-    my @left  = $_->left();
-    my @right = $_->right();
-    { tag => $_->tag(), left => scalar @left, right => scalar @right }
-  } $self->raw()->lineage();
+    my @left  = $_->left;
+    my @right = $_->right;
+    { tag => $_->tag, left => scalar @left, right => scalar @right }
+  } $self->raw->lineage;
   $self->{sibind} = \@indexes;
 
   my @list = grep { $_ ne "" } map {
     if (ref $_ eq "HTML::Element") {
-      #$_->as_HTML();
       join(",", grep { $_ ne "" } ($_->attr('alt'), $_->attr('class'), $_->attr('rel'), $_->id(), $_->attr('src')));
     } else {
       $_;
     }
-  } $self->raw()->content_list(), $self->raw();
+  } $self->_children;
   $self->{content} = \@list;
   
   $self->{rel} = $self->{raw}->attr('rel');
+}
+
+sub _children {
+  my $self = shift;
+  return $self->raw->content_list;
 }
 
 sub raw {
@@ -51,12 +75,9 @@ sub raw {
   return $self->{raw};
 }
 
-sub url {
+sub path {
   my $self = shift;
-  my $url = $self->{url};
-  $url =~ s/^\Q$self->{base}\E//;
-  $url = "/" if $url eq "";
-  return $url;
+  return $self->{url}->full_path;
 }
 
 sub tag {
@@ -95,34 +116,52 @@ sub rel {
   my $self = shift;
   return $self->{rel};
 }
-  
+
+sub abs {
+  my $self = shift;
+  return $self->{url}->abs;
+}
+
+sub print {
+  my $self = shift;
+  return $self->sibprint, " ", $self->contprint, " ", $self->path, "\n";
+}
+
+sub is_http {
+  my $self = shift;
+  return ($self->{url}->scheme =~ /^(https?|)$/);
+}
+
 sub samesite {
   my $self = shift;
-  return ($self->{url} =~ /^\Q$self->{base}\E/ or $self->{url} !~ /^https?:\/\//);
+  return ($self->{url}->host eq "" or $self->{url}->host =~ /^(www\.)?\Q$self->{base}\E$/);
 }
 
-sub prev_next {
+sub urlmatches {
   my $self = shift;
-  return $self->contprint() =~ /prev|next|forward|back/i;
+  my @matches = $self->path =~ /comic/;
+  return log(1 + @matches);
 }
 
-use constant W_INDEX         => 5.0;
-use constant W_INDEX_LEFT    => 0.7;
-use constant W_INDEX_RIGHT   => 0.1;
-use constant W_INDEX_SAME    => 4.0;
-use constant W_INDEX_MISSING =>-8.0;
-use constant W_INDEX_DECAY   => 0.9;
-use constant W_CONTENT       => 5.0;
-use constant W_CONTENT_EMPTY => 0.001;
-use constant W_URL           => 4.0;
-use constant W_REL           =>50.0;
-use constant W_PREV_NEXT     => 2.0;
-use constant W_FRIENDS       => 2.0;
+sub numeric {
+  my $self = shift;
+  my @num = $self->path =~ /[0-9]+/g;
+
+  return log(1 + sum map { length $_ } @num);
+}
+
+sub weight {
+  my $self = shift;
+  return ( 
+    (W_URLMATCH * $self->urlmatches),
+    (W_NUMERIC  * $self->numeric)
+  );
+}
 
 sub sibcompare {
   my ($an, $bn) = @_;
-  my @a = @{$an->sibind()};
-  my @b = @{$bn->sibind()};
+  my @a = @{$an->sibind};
+  my @b = @{$bn->sibind};
 
   my $exp = 1.0 / W_INDEX_DECAY;
 
@@ -130,7 +169,7 @@ sub sibcompare {
     return W_INDEX_MISSING if not defined $a or not defined $b;
     $exp *= W_INDEX_DECAY;
 
-    W_INDEX_SAME  * ($a->{tag} eq $b->{tag}) +
+    W_INDEX_DIFF  * ($a->{tag} ne $b->{tag}) +
     W_INDEX_LEFT  * $exp / (1.0 + abs($a->{left}  - $b->{left})) +
     W_INDEX_RIGHT * $exp / (1.0 + abs($a->{right} - $b->{right}))
   } @a, @b;
@@ -139,8 +178,8 @@ sub sibcompare {
 }
 
 sub contcompare {
-  my @a = @{shift->content()};
-  my @b = @{shift->content()};
+  my @a = @{shift->content};
+  my @b = @{shift->content};
 
   return W_CONTENT_EMPTY if @a == 0 or @b == 0;
   my $total = sum pairwise { 1.0 / (1 + distance($a, $b)) } @a, @b;
@@ -150,31 +189,25 @@ sub contcompare {
 
 sub urlcompare {
   my ($a, $b) = @_;
-  my $dist = 1.0 / (1 + distance($a->url(), $b->url()));
-  return $dist == 1 ? -1 : $dist;
+  return -2 if $a->path eq $b->path;
+  return (-0.001 * abs(length($a->path) - length($b->path))) + (1.0 / (1 + distance($a->path, $b->path)));
 }
 
-sub friends {
-  my ($a, $b) = @_;
-  my $dist_ab = 1.0 / (1 + distance($a->url(), $b->page()));
-  my $dist_ba = 1.0 / (1 + distance($b->url(), $a->page()));
-  return $dist_ab + $dist_ba;
-}
-    
 sub compare {
   my ($a, $b) = @_;
 
+  my @aw = $a->weight;
+  my @bw = $b->weight;
+
+  my $sim = -abs(sum @aw - sum @bw);
+
   my @t = (
+    @aw, @bw, $sim,
     (W_INDEX     * sibcompare($a, $b)),
     (W_CONTENT   * contcompare($a, $b)),
     (W_URL       * urlcompare($a, $b)),
-    # Try not to use these, since they overwhelm other heuristics
-    #(W_PREV_NEXT * ($a->prev_next() and $b->prev_next())),
-    #(W_REL       * (rel($a) ne "" and rel($b) ne "" and rel($a) eq rel($b))),
-    (W_FRIENDS   * friends($a, $b))
   );
-  #print $a->contprint(), " ", $b->contprint(), " ", $a->url(), " ", $b->url(), " ", Dumper(\@t);
-  return sum @t;
+  return @t;
 }
 
 1;

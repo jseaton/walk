@@ -3,72 +3,49 @@ use warnings;
 use strict;
 use utf8;
 
-use WWW::Mechanize;
-use WWW::Mechanize::TreeBuilder;
-use Data::Dumper;
 use Carp;
 use Carp::Always;
-use List::MoreUtils qw( pairwise );
-use Devel::Trace qw( trace );
-use URI::URL ();
+use Data::Dumper;
+use Hash::PriorityQueue;
 
-use Node;
+use Walk;
 
 binmode(STDOUT, ":utf8");
 
-use constant W_SELECT => 10;
+my $walk = Walk->new();
 
-my $mech = WWW::Mechanize->new();
-WWW::Mechanize::TreeBuilder->meta->apply($mech);
+my $q = Hash::PriorityQueue->new;
 
-print "Getting...\n";
-$mech->get($ARGV[0]);
-
-print "Finding...\n";
-my @a = $mech->find('a');
-
-my $base = URI::URL->new($ARGV[0]);
-my $url  = $base->scheme() . $base->host();
-
-sub filter {
-  my $page = shift;
-  return grep { $_->samesite() } map { Node->new($_, $url, $page) } grep { defined $_ } @_[0 .. 200];
-}
-
-
-print "Filtering...\n";
-my @al = filter $ARGV[0], @a;
-
-print "Getting...\n";
-$mech->get($ARGV[1]);
-print "Finding...\n";
-my @b = $mech->find('a');
-
-print "Filtering...\n";
-my @bl = filter $ARGV[2], @b;
-
-print "Picking...\n";
-print scalar(@al), "\n";
-print scalar(@bl), "\n";
-
-my @good;
-for my $a (@al) {
-  for my $b (@bl) {
-    my $t = $a->compare($b);
-    if ($t >= W_SELECT) {
-      push @good, [$t, $a, $b];
-    }
+sub add_nodes {
+  for my $i (@_) {
+    my ($t, $n) = @$i;
+    $q->insert($n, -$t);
   }
 }
-print "\n";
 
-print "Sorting...\n";
-@good = sort { $a->[0] <=> $b->[0] } @good;
+sub get_node {
+  my $n;
+  do {
+    $n = $q->pop;
+  } while (defined $n and not $walk->unseen($n));
+  return $n;
+}
 
-for my $e (@good >= 30 ? @good[ -30 .. -1 ] : @good) {
-  my ($t, $a, $b) = @$e;
-  print "$t\n";
-  print "AAAA ", $a->sibprint(), " ", $a->contprint(), " ", $a->url(), "\n";
-  print "BBBB ", $b->sibprint(), " ", $b->contprint(), " ", $b->url(), "\n";
-  print "\n";
+my ($al, $ai) = $walk->get_data($ARGV[0]);
+
+add_nodes weigh_all $al;
+
+my $n = get_node;
+die "No Node!" unless defined $n;
+my ($bl, $bi) = $walk->get_data($n->abs);
+
+while (1) {
+  if (defined $bl) {
+    add_nodes compare_all($bl, $al);
+    $al = $bl;
+  }
+
+  my $n = get_node;
+  last unless $n;
+  ($bl, $bi) = $walk->get_data($n->abs);
 }
