@@ -2,6 +2,7 @@ package Link;
 use parent 'Node';
 
 use Text::LevenshteinXS qw(distance);
+use Memoize;
 
 use constant W_PREV_NEXT     => 2.0;
 
@@ -19,6 +20,7 @@ sub prev_next {
   my $self = shift;
   return $self->contprint =~ /prev|next|forward|back/i;
 }
+memoize('prev_next');
 
 sub same {
   my $self = shift;
@@ -31,8 +33,8 @@ sub same {
 
 sub friends {
   my ($a, $b) = @_;
-  my $dist_ab = 1.0 / (1 + distance($a->path, $b->page->path));
-  my $dist_ba = 1.0 / (1 + distance($b->path, $a->page->path));
+  my $dist_ab = 1.0 / (1 + distance($a->path, $b->page_path));
+  my $dist_ba = 1.0 / (1 + distance($b->path, $a->page_path));
   return $dist_ab + $dist_ba;
 }
 

@@ -79,6 +79,13 @@ sub path {
   my $self = shift;
   return $self->{url}->full_path;
 }
+memoize('path');
+
+sub page_path {
+  my $self = shift;
+  return $self->{page}->full_path;
+}
+memoize('page_path');
 
 sub tag {
   my $self = shift;
@@ -137,6 +144,11 @@ sub samesite {
   return ($self->{url}->host eq "" or $self->{url}->host =~ /^(www\.)?\Q$self->{base}\E$/);
 }
 
+sub samepage {
+  my $self = shift;
+  return ($self->path eq $self->page_path);
+}
+
 sub urlmatches {
   my $self = shift;
   my @matches = $self->path =~ /comic/;
@@ -157,6 +169,7 @@ sub weight {
     (W_NUMERIC  * $self->numeric)
   );
 }
+memoize('weight');
 
 sub sibcompare {
   my ($an, $bn) = @_;

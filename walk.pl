@@ -39,10 +39,15 @@ my $n = get_node;
 die "No Node!" unless defined $n;
 my ($bl, $bi) = $walk->get_data($n->abs);
 
-while (1) {
-  if (defined $bl) {
-    add_nodes compare_all($bl, $al);
-    $al = $bl;
+foreach my $i (0..200) {
+  if (defined $bl and defined $bi) {
+    my @imgs = compare_all($bi, $ai);
+    print $imgs[-1]->[0], " ", $imgs[-1]->[1]->print, "\n";
+    if ($imgs[-1]->[0] > 5) {
+      add_nodes compare_all($bl, $al);
+      $al = $bl;
+      $ai = $bi;
+    } else { print "(ignored)\n"; }
   }
 
   my $n = get_node;

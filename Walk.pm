@@ -20,7 +20,7 @@ use Link;
 
 binmode(STDOUT, ":utf8");
 
-use constant W_SELECT => 10;
+use constant W_SELECT => 5;
 
 sub new {
   my $class = shift;
@@ -32,7 +32,7 @@ sub new {
 sub filter {
   my $page = shift;
   my $name = shift;
-  return grep { $_->is_http and $_->samesite } map { $name->new($_, $page) } grep { defined $_ } @_[0 .. 200];
+  return grep { $_->is_http and $_->samesite and not $_->samepage } map { $name->new($_, $page) } grep { defined $_ } @_[0 .. 100];
 }
 
 sub unseen {
